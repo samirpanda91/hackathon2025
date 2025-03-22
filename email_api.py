@@ -114,3 +114,6 @@ def read_image(file_path):
 
 if __name__ == "__main__":
     get_unread_emails()
+
+pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client pytesseract pillow pdf2image
+
