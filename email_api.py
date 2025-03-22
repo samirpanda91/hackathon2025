@@ -1,3 +1,6 @@
+
+pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
+
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 from google.auth.transport.requests import Request
