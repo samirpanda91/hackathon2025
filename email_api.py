@@ -1,17 +1,14 @@
 from googleapiclient.discovery import build
-from google.oauth2 import service_account
 from google.auth.transport.requests import Request
 import base64
 import os
 import pickle
-import email
 import pytesseract
 from PIL import Image
-from io import BytesIO
 from pdf2image import convert_from_bytes
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
-SAVE_DIR = "attachments"  # Directory to save attachments
+SAVE_DIR = "attachments"
 
 def authenticate_gmail():
     creds = None
@@ -50,7 +47,7 @@ def get_unread_emails():
         print("No new unread emails.")
         return
 
-    os.makedirs(SAVE_DIR, exist_ok=True)  # Ensure attachment folder exists
+    os.makedirs(SAVE_DIR, exist_ok=True)
 
     for msg in messages:
         msg_id = msg['id']
@@ -68,7 +65,6 @@ def get_unread_emails():
                 body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8")
                 print(f"Body:\n{body}\n{'-'*50}")
 
-            # Handling attachments
             if part["filename"] and "attachmentId" in part["body"]:
                 attachment_id = part["body"]["attachmentId"]
                 attachment = service.users().messages().attachments().get(userId="me", messageId=msg_id, id=attachment_id).execute()
@@ -79,7 +75,6 @@ def get_unread_emails():
                     f.write(data)
                 print(f"Attachment saved: {file_path}")
 
-                # Process attachments (TXT, PDF, Images)
                 process_attachment(file_path)
 
 def process_attachment(file_path):
@@ -100,7 +95,7 @@ def read_txt(file_path):
 def read_pdf(file_path):
     """Extract text from PDF using OCR."""
     with open(file_path, "rb") as f:
-        images = convert_from_bytes(f.read())  # Convert PDF pages to images
+        images = convert_from_bytes(f.read())
     extracted_text = ""
     for img in images:
         extracted_text += pytesseract.image_to_string(img) + "\n"
@@ -114,6 +109,4 @@ def read_image(file_path):
 
 if __name__ == "__main__":
     get_unread_emails()
-
-pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client pytesseract pillow pdf2image
 
