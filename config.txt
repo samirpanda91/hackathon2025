@@ -1,4 +1,223 @@
-{"web":{"client_id":"596738345316-qbmu2q95htgi58vm91bki6hfa0g986kb.apps.googleusercontent.com","project_id":"quantum-balm-454509-c7","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_secret":"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"}}
+import os
+import base64
+import json
+import re
+from datetime import datetime
+from typing import List, Dict, Optional, Tuple
 
+import pytz
+from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
 
-pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client requests openai
+from transformers import pipeline
+from PIL import Image
+import pytesseract
+import PyPDF2
+import io
+
+# Configuration
+SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+MODEL_NAME = "facebook/bart-large-mnli"  # Zero-shot classification model
+EXTRACTOR_MODEL = "dslim/bert-base-NER"  # For named entity recognition
+DUPLICATE_MODEL = "sentence-transformers/all-MiniLM-L6-v2"  # For similarity detection
+
+# Initialize Hugging Face pipelines
+classifier = pipeline("zero-shot-classification", model=MODEL_NAME)
+ner_pipeline = pipeline("ner", model=EXTRACTOR_MODEL)
+similarity_pipeline = pipeline("feature-extraction", model=DUPLICATE_MODEL)
+
+# Request types and subtypes from the problem statement
+REQUEST_TYPES = [
+    "Adjustment",
+    "AU Transfer",
+    "Closing Notice",
+    "Commitment Change",
+    "Fee Payment",
+    "Money Movement-Inbound",
+    "Money Movement-Outbound"
+]
+
+SUB_REQUEST_TYPES = {
+    "Closing Notice": ["Reallocation Fees", "Amendment Fees", "Reallocation Principal"],
+    "Commitment Change": ["Cashless Roll", "Decrease", "Increase"],
+    "Fee Payment": ["Ongoing Fee", "Letter of Credit Fee"],
+    "Money Movement-Inbound": ["Principal", "Interest", "Principal + Interest", "Principal+Interest+Fee"],
+    "Money Movement-Outbound": ["Timebound", "Foreign Currency"]
+}
+
+# Configurable fields to extract based on request type
+CONFIGURABLE_FIELDS = {
+    "default": ["deal_name", "amount", "expiration_date", "sender_name"],
+    "Money Movement-Inbound": ["account_number", "routing_number", "transfer_amount", "currency"],
+    "Money Movement-Outbound": ["account_number", "routing_number", "transfer_amount", "currency", "destination_country"],
+    "Fee Payment": ["fee_type", "amount", "due_date", "payment_method"],
+    "Adjustment": ["adjustment_reason", "amount", "effective_date"]
+}
+
+def get_gmail_service():
+    """Authenticate and return Gmail service."""
+    creds = None
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
+    return build('gmail', 'v1', credentials=creds)
+
+def extract_text_from_pdf(attachment):
+    """Extract text from PDF attachment."""
+    pdf_reader = PyPDF2.PdfReader(io.BytesIO(attachment))
+    text = ""
+    for page in pdf_reader.pages:
+        text += page.extract_text()
+    return text
+
+def extract_text_from_image(attachment):
+    """Extract text from image using OCR."""
+    image = Image.open(io.BytesIO(attachment))
+    return pytesseract.image_to_string(image)
+
+def process_attachment(part):
+    """Process email attachment and return extracted text."""
+    if part['mimeType'] == 'application/pdf':
+        return extract_text_from_pdf(base64.urlsafe_b64decode(part['body'].get('data', '')))
+    elif part['mimeType'].startswith('image/'):
+        return extract_text_from_image(base64.urlsafe_b64decode(part['body'].get('data', '')))
+    return ""
+
+def get_email_content(message):
+    """Extract email body and process attachments."""
+    parts = message['payload']['parts'] if 'parts' in message['payload'] else [message['payload']]
+    body = ""
+    attachments_text = []
+    
+    for part in parts:
+        if part['mimeType'] == 'text/plain':
+            body += base64.urlsafe_b64decode(part['body'].get('data', '')).decode('utf-8')
+        elif part['filename'] and part['body'].get('attachmentId'):
+            attachments_text.append(process_attachment(part))
+    
+    return body, "\n".join(attachments_text)
+
+def classify_request_type(content: str) -> Tuple[str, str, float]:
+    """Classify email content into request type and subtype with confidence."""
+    # First classify main request type
+    result = classifier(content, REQUEST_TYPES, multi_label=False)
+    primary_type = result['labels'][0]
+    confidence = result['scores'][0]
+    
+    # Then classify subtype if available
+    subtype = ""
+    if primary_type in SUB_REQUEST_TYPES:
+        subtype_result = classifier(content, SUB_REQUEST_TYPES[primary_type], multi_label=False)
+        subtype = subtype_result['labels'][0]
+        confidence = min(confidence, subtype_result['scores'][0])  # Combined confidence
+    
+    return primary_type, subtype, confidence
+
+def extract_fields(content: str, request_type: str) -> Dict:
+    """Extract configurable fields based on request type."""
+    fields_to_extract = CONFIGURABLE_FIELDS.get(request_type, CONFIGURABLE_FIELDS['default'])
+    entities = ner_pipeline(content)
+    
+    extracted = {}
+    for field in fields_to_extract:
+        # Simple pattern matching (can be enhanced with more sophisticated rules)
+        if field == 'amount':
+            amounts = re.findall(r'\$\d+(?:,\d+)*(?:\.\d+)?|\d+(?:,\d+)*(?:\.\d+)?\s?(?:USD|EUR|GBP)', content)
+            if amounts:
+                extracted[field] = amounts[0]
+        elif field == 'expiration_date' or field == 'due_date':
+            dates = re.findall(r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4}\b', content)
+            if dates:
+                extracted[field] = dates[0]
+        else:
+            # Use NER for other fields
+            for entity in entities:
+                if entity['word'].lower() == field.lower():
+                    extracted[field] = entity['word']
+    
+    return extracted
+
+def check_duplicate(content: str, processed_emails: List[Dict]) -> Optional[Dict]:
+    """Check if email content is similar to previously processed emails."""
+    if not processed_emails:
+        return None
+    
+    current_embedding = similarity_pipeline(content)[0]
+    for email in processed_emails:
+        existing_embedding = similarity_pipeline(email['content'])[0]
+        similarity = np.dot(current_embedding, existing_embedding) / (np.linalg.norm(current_embedding) * np.linalg.norm(existing_embedding))
+        if similarity > 0.9:  # High similarity threshold
+            return email
+    return None
+
+def process_emails():
+    """Main function to process unread emails."""
+    service = get_gmail_service()
+    results = service.users().messages().list(userId='me', labelIds=['INBOX', 'UNREAD']).execute()
+    messages = results.get('messages', [])
+    
+    processed_emails = []
+    output = []
+    
+    for msg in messages:
+        message = service.users().messages().get(userId='me', id=msg['id'], format='full').execute()
+        
+        # Mark as read to avoid duplicate processing
+        service.users().messages().modify(userId='me', id=msg['id'], body={'removeLabelIds': ['UNREAD']}).execute()
+        
+        # Extract email content
+        body, attachments_text = get_email_content(message)
+        full_content = f"{body}\n{attachments_text}"
+        
+        # Check for duplicates
+        duplicate_info = check_duplicate(full_content, processed_emails)
+        if duplicate_info:
+            output.append({
+                "email_id": message['id'],
+                "timestamp": message['internalDate'],
+                "status": "duplicate",
+                "original_email_id": duplicate_info['email_id'],
+                "reason": "High content similarity with previously processed email"
+            })
+            continue
+        
+        # Classify request
+        request_type, sub_type, confidence = classify_request_type(full_content)
+        
+        # Extract fields
+        extracted_fields = extract_fields(full_content, request_type)
+        
+        # Prepare output
+        result = {
+            "email_id": message['id'],
+            "timestamp": datetime.fromtimestamp(int(message['internalDate'])/1000, pytz.UTC).isoformat(),
+            "request_type": request_type,
+            "sub_request_type": sub_type,
+            "confidence_score": confidence,
+            "extracted_fields": extracted_fields,
+            "status": "processed",
+            "content": full_content[:500] + "..." if len(full_content) > 500 else full_content  # Include snippet
+        }
+        
+        output.append(result)
+        processed_emails.append({
+            "email_id": message['id'],
+            "content": full_content,
+            "request_type": request_type
+        })
+    
+    return output
+
+if __name__ == "__main__":
+    # Process emails and output JSON
+    results = process_emails()
+    print(json.dumps(results, indent=2))
