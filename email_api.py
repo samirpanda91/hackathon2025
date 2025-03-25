@@ -99,9 +99,7 @@ def read_txt(file_path):
     with open(file_path, "r", encoding="utf-8") as f:
         content = f.read()
     print(f"TXT Content:\n{content}\n{'-'*50}")
-    text_to_summarize.join(content)
-    return text_to_summarize
-    # summarize_text(content)
+    summarize_text(content)
 
 def read_pdf(file_path):
     """Extract and summarize text from PDF using OCR."""
@@ -112,18 +110,14 @@ def read_pdf(file_path):
         extracted_text += pytesseract.image_to_string(img) + "\n"
     
     print(f"PDF Extracted Text:\n{extracted_text}\n{'-'*50}")
-    text_to_summarize.join(extracted_text)
-    return text_to_summarize
-    # summarize_text(extracted_text)
+    summarize_text(extracted_text)
 
 def read_image(file_path):
     """Extract and summarize text from an image using OCR."""
     img = Image.open(file_path)
     text = pytesseract.image_to_string(img)
     print(f"Image Extracted Text:\n{text}\n{'-'*50}")
-    text_to_summarize.join(text)
-    return text_to_summarize
-    # summarize_text(text)
+    summarize_text(text)
 
 def summarize_text(text):
     """Summarizes extracted text using AI."""
