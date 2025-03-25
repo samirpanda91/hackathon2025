@@ -1,1 +1,32 @@
-Token indices sequence length is longer than the specified maximum sequence length for this model (4781 > 512). Running this sequence through the model will result in indexing errors
+from transformers import pipeline
+import textwrap
+
+# Load summarization model
+summarizer = pipeline("summarization", model="google/flan-t5-large")  # Or "tiiuae/falcon-7b-instruct"
+
+def summarize_text(text, max_chunk_length=500):
+    """Splits long text into chunks and summarizes each separately."""
+    sentences = text.split(". ")  # Split by sentence
+    chunks = []
+    current_chunk = ""
+
+    for sentence in sentences:
+        if len(current_chunk) + len(sentence) <= max_chunk_length:
+            current_chunk += sentence + ". "
+        else:
+            chunks.append(current_chunk.strip())
+            current_chunk = sentence + ". "
+
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+
+    # Summarize each chunk separately
+    summaries = []
+    for chunk in chunks:
+        summary = summarizer(chunk, max_length=150, min_length=30, do_sample=False)[0]['summary_text']
+        summaries.append(summary)
+
+    # Combine all summaries
+    final_summary = " ".join(summaries)
+    print(f"AI Summary:\n{final_summary}\n{'-'*50}")
+    return final_summary
