@@ -7,6 +7,7 @@ import pickle
 import re
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple, Set
 
@@ -202,6 +203,7 @@ class EmailProcessor:
             return self.extract_text_from_image(attachment_data)
         elif part['mimeType'] == 'text/plain':
             return attachment_data.decode('utf-8')
+
         return ""
 
     def get_email_content(self, message: Dict, service) -> str:
@@ -230,6 +232,7 @@ class EmailProcessor:
         Email:
         {content[:10000]}
         """
+
         try:
             response = self.gemini_model.generate_content(prompt)
             json_str = response.text.strip().replace('```json', '').replace('```', '').strip()
@@ -376,6 +379,7 @@ class EmailProcessor:
         Subject: {subject}
         Content: {content[:20000]}
         """
+
         try:
             response = self.gemini_model.generate_content(prompt)
             return response.text.strip()
@@ -501,16 +505,24 @@ class EmailMonitor:
         self._running = False
 
 
-app = FastAPI()
-email_processor = EmailProcessor()
-email_monitor = EmailMonitor(email_processor)
-
-
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle startup and shutdown events"""
+    # Startup code
+    print("Starting up...")
     genai.configure(api_key=GEMINI_API_KEY)
     monitor_thread = threading.Thread(target=email_monitor.start, daemon=True)
     monitor_thread.start()
+    yield
+    # Shutdown code
+    print("Shutting down...")
+    email_monitor.stop()
+
+
+# Update FastAPI initialization
+app = FastAPI(lifespan=lifespan)
+email_processor = EmailProcessor()
+email_monitor = EmailMonitor(email_processor)
 
 
 @app.get("/emails", response_model=List[EmailResponse])
