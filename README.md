@@ -12,10 +12,10 @@ This system processes incoming emails, classifies them by request type, extracts
 - Background monitoring of new emails  
 
 ## Installation
-Set up Python environment: (Python 3.9.0)  
+### Set up Python environment: (Python 3.9.0)  
 - python -m venv venv  
 - source venv/bin/activate  # On Windows: venv\Scripts\activate  
-Install dependencies:  
+### Install dependencies:  
 - pip install -r requirements.txt  
 Set up Google Cloud credentials:  
 - Create a project in Google Cloud Console  
