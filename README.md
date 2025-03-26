@@ -13,7 +13,7 @@ This system processes incoming emails, classifies them by request type, extracts
 - Background monitoring of new emails
 
 ## Installation
-Set up Python environment:
+Set up Python environment: (Python 3.9.0)
 - python -m venv venv
 - source venv/bin/activate  # On Windows: venv\Scripts\activate
 Install dependencies:
@@ -52,22 +52,6 @@ Monitor logs:
 - Processed emails are stored in memory and available via the API
 
 ## API Documentation
-EmailResponse Model
-- {
-  "message_id": "string",
-  "sender_email": "string",
-  "timestamp": "string",
-  "subject": "string",
-  "summary": "string",
-  "request_type": "string",
-  "sub_request_type": "string",
-  "confidence_score": 0.95,
-  "extracted_fields": {
-    "field1": "value1",
-    "field2": "value2"
-  },
-  "status": "string"
-}
 Endpoints:
 - GET /emails - Returns all processed emails
 - GET /emails/{message_id} - Returns a specific email by its message ID
